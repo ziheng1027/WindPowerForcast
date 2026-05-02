@@ -1,0 +1,48 @@
+# ============================================================
+# BiLSTM 模型配置
+# ============================================================
+
+# ---------------------- 模型结构 ----------------------
+
+# 模型名称
+model: bilstm
+
+# 输入序列长度
+seq_len: 96
+
+# 预测序列长度
+pred_len: 16
+
+# 输入特征维度（变量数）
+enc_in: 17
+
+# LSTM 隐状态维度（单方向，双向实际为 2x）
+# 数据量仅 ~29k 样本，64 足以避免过拟合
+hidden_size: 64
+
+# LSTM 层数
+# 1 层足以，2 层仅提升 15~19% 但过拟合风险更大
+num_layers: 1
+
+# Dropout 率（层间 + 投影前）
+dropout: 0.2
+
+# 是否双向 LSTM
+bidirectional: true
+
+# ---------------------- 训练参数 ----------------------
+
+seed: 42
+device: cuda
+lr: 0.001
+batch_size: 64
+epochs: 100
+patience: 10
+optimizer: adamw
+scheduler: cosine
+grad_clip: 1.0
+
+# ---------------------- 数据路径 ----------------------
+
+data_dir: data/wind_power/processed
+target_col: actual_power

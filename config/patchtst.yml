@@ -1,0 +1,70 @@
+# ============================================================
+# PatchTST 模型配置
+# ============================================================
+
+# ---------------------- 模型结构 ----------------------
+
+# 模型名称
+model: patchtst
+
+# 输入序列长度（回看窗口）
+# 96 步 = 24 小时（15min 间隔）
+seq_len: 96
+
+# 预测序列长度
+# 16 步 = 4 小时
+pred_len: 16
+
+# 输入特征维度（变量数）
+enc_in: 17
+
+# Patch 长度
+# 每个 patch 包含的时间步数
+# 16 步 = 4 小时，与官方 Weather 一致
+patch_len: 16
+
+# Patch 步长
+# stride=8 有重叠切分，seq_len=96 时产生 11 个 patch
+# 远优于 stride=24 的 4 个 patch
+stride: 8
+
+# 模型隐藏维度
+# 128 为官方 Weather 基准值
+d_model: 128
+
+# 前馈网络中间维度
+d_ff: 256
+
+# 编码器层数
+# 3 层为官方 Weather 基准配置
+e_layers: 3
+
+# 多头注意力头数
+n_heads: 4
+
+# Dropout 率
+dropout: 0.2
+
+# FC 层 Dropout（官方 PatchTST 额外配置）
+fc_dropout: 0.2
+
+# 是否使用 RevIN 实例归一化
+# true: 对每个样本独立归一化，缓解非平稳性（推荐）
+revin: true
+
+# ---------------------- 训练参数 ----------------------
+
+seed: 42
+device: cuda
+lr: 0.0001
+batch_size: 32
+epochs: 100
+patience: 10
+optimizer: adamw
+scheduler: cosine
+grad_clip: 1.0
+
+# ---------------------- 数据路径 ----------------------
+
+data_dir: data/wind_power/processed
+target_col: actual_power
