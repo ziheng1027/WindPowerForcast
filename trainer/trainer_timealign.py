@@ -52,7 +52,7 @@ class TrainerTimeAlign(TrainerBase):
         metrics : dict
             分项损失详情
         """
-        x_enc, y_enc, _ = batch
+        x_enc, y_enc, _, _, _ = batch
         x_enc = x_enc.to(self.device)
         y_enc = y_enc.to(self.device)
 
@@ -61,7 +61,7 @@ class TrainerTimeAlign(TrainerBase):
             x_enc, y_enc, is_training=is_training
         )
 
-        # 取目标列（第0列）
+        # 模型输出 [B, pred_len, C], 只对目标变量(第0维)计算loss
         pred_target = output[:, -self.pred_len :, 0]
         true_target = y_enc[:, -self.pred_len :, 0]
 

@@ -1,8 +1,10 @@
 """
-测试入口：加载模型 → 推理 → 评估 → 可视化。
+测试入口：加载模型 → 推理 → 评估 → 可视化 + 导出。
 """
 
 import argparse
+import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -10,13 +12,12 @@ import torch
 
 from tool.logger import Logger
 from tool.metrics import (
-    calculate_all_step_metrics,
-    calculate_metrics,
-    calculate_monthly_metrics,
-    calculate_step_metrics,
+    CAPACITY,
+    calculate_global_metrics,
+    calculate_gbt_metrics,
 )
 from tool.utils import get_device, load_config, set_seed
-from tool.visualize import plot_prediction, plot_step_accuracy
+from tool.visualize import plot_step_accuracy, plot_step_series
 
 
 def get_model(model_name, config):
@@ -26,18 +27,142 @@ def get_model(model_name, config):
     from model.patchtst import PatchTST
     from model.dlinear import DLinear
     from model.lstm import LSTMForecaster
+    from model.tcn import TCNForecaster
+    from model.meteo_power import MeteoPowerNet
 
     models = {
         "timealign": TimeAlign,
+        "meteo_power": MeteoPowerNet,
         "itransformer": ITransformer,
         "patchtst": PatchTST,
         "dlinear": DLinear,
         "lstm": LSTMForecaster,
         "bilstm": LSTMForecaster,
+        "tcn": TCNForecaster,
     }
     if model_name not in models:
         raise ValueError(f"未知模型: {model_name}")
     return models[model_name](config)
+
+
+def _log_gbt(logger, gbt):
+    """格式化输出国标指标。"""
+    for ym, m in gbt["monthly"].items():
+        logger.log_eval(
+            f"  {ym}: Acc={m['accuracy']:.2f}%, "
+            f"Qual={m['qualification_rate']:.2f}%, "
+            f"R={m['r']:.4f}, "
+            f"N_days={m['n_days']}"
+        )
+    logger.log_eval(
+        f"  月均准确率: "
+        f"{gbt['monthly_avg_accuracy']:.2f}%"
+    )
+    logger.log_eval(
+        f"  月均合格率: "
+        f"{gbt['monthly_avg_qualification_rate']:.2f}%"
+    )
+    logger.log_eval(
+        f"  月均相关系数: "
+        f"{gbt['monthly_avg_r']:.4f}"
+    )
+
+
+def _reconstruct_datetime(dates, minutes):
+    """将日期编码 + 分钟数重构为可读时间戳。"""
+    d = int(dates)
+    m = int(minutes)
+    return pd.Timestamp(
+        year=d // 10000,
+        month=(d // 100) % 100,
+        day=d % 100,
+        hour=m // 60,
+        minute=m % 60,
+    )
+
+
+def _export_step_report(
+    preds, trues, dates, minutes, step,
+    capacity, result_dir
+):
+    """
+    导出指定步长的逐点明细 CSV 和日报汇总 CSV。
+
+    Parameters
+    ----------
+    preds : np.ndarray, shape [N, pred_len]
+    trues : np.ndarray
+    dates : np.ndarray, shape [N, pred_len]
+    minutes : np.ndarray, shape [N, pred_len]
+    step : int
+        步长索引 (0-based)
+    capacity : float
+    result_dir : str
+    """
+    os.makedirs(result_dir, exist_ok=True)
+
+    p = preds[:, step]
+    t = trues[:, step]
+    d = dates[:, step]
+    m = minutes[:, step]
+    tag = step + 1
+
+    # ---- 逐点明细 ----
+    threshold = 0.25 * capacity
+    detail_rows = []
+    for i in range(len(p)):
+        dt = _reconstruct_datetime(d[i], m[i])
+        abs_err = abs(float(p[i] - t[i]))
+        detail_rows.append({
+            "datetime": dt.strftime("%Y-%m-%d %H:%M"),
+            "date": dt.strftime("%Y-%m-%d"),
+            "pred_power(kW)": round(float(p[i]), 2),
+            "actual_power(kW)": round(float(t[i]), 2),
+            "abs_error(kW)": round(abs_err, 2),
+            "qualified": abs_err <= threshold,
+        })
+
+    detail_df = pd.DataFrame(detail_rows)
+    detail_path = os.path.join(
+        result_dir, f"step{tag}_detail.csv"
+    )
+    detail_df.to_csv(
+        detail_path, index=False, encoding="utf-8-sig"
+    )
+
+    # ---- 日报汇总 ----
+    daily_groups = detail_df.groupby("date")
+    daily_rows = []
+    for date_str, group in daily_groups:
+        p_day = group["pred_power(kW)"].values
+        t_day = group["actual_power(kW)"].values
+        error = p_day - t_day
+        rmse = float(np.sqrt(np.mean(error ** 2)))
+        accuracy = (1 - rmse / capacity) * 100
+        qual_rate = group["qualified"].mean() * 100
+
+        if np.std(p_day) < 1e-8 or np.std(t_day) < 1e-8:
+            r = 0.0
+        else:
+            r = float(np.corrcoef(p_day, t_day)[0, 1])
+
+        daily_rows.append({
+            "date": date_str,
+            "accuracy(%)": round(accuracy, 2),
+            "qualification_rate(%)": round(qual_rate, 2),
+            "r": round(r, 4),
+            "n_points": len(group),
+        })
+
+    daily_df = pd.DataFrame(daily_rows)
+    daily_path = os.path.join(
+        result_dir, f"step{tag}_daily.csv"
+    )
+    daily_df.to_csv(
+        daily_path, index=False, encoding="utf-8-sig"
+    )
+
+    return detail_path, daily_path
 
 
 def main():
@@ -48,25 +173,26 @@ def main():
     )
     args = parser.parse_args()
 
-    # 1. 加载配置
     config = load_config(args.config)
     model_name = config["model"]
 
-    # 2. 设置种子和设备
     set_seed(config.get("seed", 42))
     device = get_device(config)
 
-    # 3. 初始化日志
     log_dir = f"output/log/{model_name}"
     logger = Logger(log_dir, model_name)
 
-    # 4. 构建数据
-    from dataset.wind_power import get_dataloader
-
-    test_loader = get_dataloader(config, "test")
+    # 构建数据
+    dataset_type = config.get("dataset_type", "default")
+    if dataset_type == "meteo":
+        from dataset.meteo_power import get_meteo_dataloader
+        test_loader = get_meteo_dataloader(config, "test")
+    else:
+        from dataset.wind_power import get_dataloader
+        test_loader = get_dataloader(config, "test")
     logger.log_eval(f"测试集: {len(test_loader.dataset)} 样本")
 
-    # 5. 加载模型
+    # 加载模型
     model = get_model(model_name, config)
     weight_path = f"output/checkpoint/{model_name}/best_model.pth"
     model.load_state_dict(
@@ -77,34 +203,49 @@ def main():
     model.eval()
     logger.log_eval(f"已加载模型: {weight_path}")
 
-    # 6. 推理
+    # 推理
     preds = []
     trues = []
-    all_months = []
+    all_dates = []
+    all_minutes = []
+
     with torch.no_grad():
         for batch in test_loader:
-            x_enc, y_enc, months = batch
-            x_enc = x_enc.to(device)
-            y_enc = y_enc.to(device)
+            if len(batch) == 8:
+                # MeteoPowerDataset: 8-tuple
+                (power_h, gfs_h, tower_h,
+                 gfs_fut, y_enc, _, dates,
+                 mins) = batch
+                power_h = power_h.to(device)
+                gfs_h = gfs_h.to(device)
+                tower_h = tower_h.to(device)
+                gfs_fut = gfs_fut.to(device)
+                y_enc = y_enc.to(device)
+                output, _, _ = model(
+                    power_h, gfs_h, tower_h,
+                    gfs_fut, is_training=False,
+                )
+            else:
+                # WindPowerDataset: 5-tuple
+                x_enc, y_enc, _, dates, mins = batch
+                x_enc = x_enc.to(device)
+                y_enc = y_enc.to(device)
+                output, _, _ = model(
+                    x_enc, y_enc, is_training=False
+                )
 
-            output, _, _ = model(
-                x_enc, y_enc, is_training=False
-            )
-
-            # 目标列（第0列）
             preds.append(output[:, :, 0].cpu().numpy())
             trues.append(y_enc[:, :, 0].cpu().numpy())
-            all_months.append(months.numpy())
+            all_dates.append(dates.numpy())
+            all_minutes.append(mins.numpy())
 
     preds = np.concatenate(preds, axis=0)
     trues = np.concatenate(trues, axis=0)
-    all_months = np.concatenate(all_months, axis=0)
+    all_dates = np.concatenate(all_dates, axis=0)
+    all_minutes = np.concatenate(all_minutes, axis=0)
     logger.log_eval(f"预测结果: {preds.shape}")
 
-    # 7. 反归一化至 kW（指标需在真实尺度计算）
-    import json
-    import os
-
+    # 反归一化至 kW
     data_dir = config.get("data_dir", "data/wind_power/processed")
     with open(os.path.join(data_dir, "norm_params.json"),
               "r", encoding="utf-8") as f:
@@ -116,72 +257,68 @@ def main():
     preds_kw = preds * scale + p_min
     trues_kw = trues * scale + p_min
 
-    # 8. 计算指标（kW 尺度）
-    overall = calculate_metrics(preds_kw, trues_kw)
-    logger.log_eval("--- 整体指标 ---")
-    logger.log_eval(f"  MAE: {overall['mae']:.2f} kW")
-    logger.log_eval(f"  RMSE: {overall['rmse']:.2f} kW")
-    logger.log_eval(f"  R: {overall['r']:.4f}")
+    # 物理约束: 功率 ∈ [0, Cap]
+    preds_kw = np.clip(preds_kw, 0, CAPACITY)
 
-    # 按月统计准确率（GBT+40607-2021）
-    monthly_result = calculate_monthly_metrics(
-        preds_kw, trues_kw, all_months
-    )
-    logger.log_eval("--- 月度指标 ---")
-    for m, metrics in monthly_result["monthly"].items():
-        logger.log_eval(
-            f"  {m}月: Acc={metrics['accuracy']:.2f}%, "
-            f"Qual={metrics['qualification_rate']:.2f}%, "
-            f"RMSE={metrics['rmse']:.2f} kW, "
-            f"R={metrics['r']:.4f}, "
-            f"N={metrics['n_points']}"
-        )
-    logger.log_eval(
-        f"  月均准确率: "
-        f"{monthly_result['monthly_avg_accuracy']:.2f}%"
+    # ---- 全局指标 (RMSE, MAE) ----
+    global_m = calculate_global_metrics(preds_kw, trues_kw)
+    logger.log_eval("--- 全局指标 ---")
+    logger.log_eval(f"  RMSE: {global_m['rmse']:.2f} kW")
+    logger.log_eval(f"  MAE: {global_m['mae']:.2f} kW")
+
+    # ---- 国标指标: 月均第 4 小时 ----
+    gbt_16 = calculate_gbt_metrics(
+        preds_kw, trues_kw, all_dates, step=15
     )
     logger.log_eval(
-        f"  月均合格率: "
-        f"{monthly_result['monthly_avg_qualification_rate']:.2f}%"
+        "--- 国标指标 (月均第 16 步 / 4h, 日→月) ---"
     )
+    _log_gbt(logger, gbt_16)
 
-    step_16 = calculate_step_metrics(preds_kw, trues_kw, step=15)
-    logger.log_eval("--- 第16步 (4h ahead) ---")
-    logger.log_eval(f"  准确率: {step_16['accuracy']:.2f}%")
-    logger.log_eval(f"  合格率: {step_16['qualification_rate']:.2f}%")
+    # ---- 国标指标: 月均第 1 步 ----
+    gbt_01 = calculate_gbt_metrics(
+        preds_kw, trues_kw, all_dates, step=0
+    )
+    logger.log_eval(
+        "--- 国标指标 (月均第 1 步 / 15min, 日→月) ---"
+    )
+    _log_gbt(logger, gbt_01)
 
-    # 9. 可视化（kW 尺度）
+    # ---- 可视化 ----
     fig_dir = f"output/figure/{model_name}"
-    plot_prediction(
-        preds_kw, trues_kw, f"{fig_dir}/prediction.png"
-    )
     plot_step_accuracy(
-        preds_kw, trues_kw, 70000,
+        preds_kw, trues_kw, CAPACITY,
         f"{fig_dir}/step_accuracy.png"
+    )
+    plot_step_series(
+        preds_kw, trues_kw, step=0,
+        save_path=f"{fig_dir}/step1_series.png",
+        dates=all_dates, minutes=all_minutes,
+        title="第 1 步预测 vs 真值 (15min ahead)",
+    )
+    plot_step_series(
+        preds_kw, trues_kw, step=15,
+        save_path=f"{fig_dir}/step16_series.png",
+        dates=all_dates, minutes=all_minutes,
+        title="第 16 步预测 vs 真值 (4h ahead)",
     )
     logger.log_eval(f"可视化图表保存至: {fig_dir}/")
 
-    # 10. 导出预测结果 CSV
-    pred_len = preds_kw.shape[1]
-    result_rows = []
-    for i in range(len(preds_kw)):
-        for step in range(pred_len):
-            result_rows.append({
-                "sample": i,
-                "step": step + 1,
-                "actual_power(kW)": f"{trues_kw[i, step]:.2f}",
-                "pred_power(kW)": f"{preds_kw[i, step]:.2f}",
-            })
-
-    result_df = pd.DataFrame(result_rows)
+    # ---- 导出 CSV ----
     result_dir = f"output/result/{model_name}"
-    os.makedirs(result_dir, exist_ok=True)
-    result_path = f"{result_dir}/prediction.csv"
-    result_df.to_csv(result_path, index=False,
-                     encoding="utf-8-sig")
-    logger.log_eval(f"预测结果保存至: {result_path}")
 
-    # 10. 关闭日志
+    for step, label in [(0, "第1步"), (15, "第16步")]:
+        d_path, day_path = _export_step_report(
+            preds_kw, trues_kw, all_dates,
+            all_minutes, step, CAPACITY, result_dir
+        )
+        logger.log_eval(
+            f"  {label}明细: {d_path}"
+        )
+        logger.log_eval(
+            f"  {label}日报: {day_path}"
+        )
+
     logger.close()
     print("测试完成。")
 

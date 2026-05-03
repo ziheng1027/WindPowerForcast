@@ -104,6 +104,8 @@ class TimeAlign(nn.Module):
         self.d_model = config["d_model"]
         self.e_layers = config["e_layers"]
         self.layer_norm = config.get("layer_norm", True)
+        # 输出通道数，默认1（actual_power）
+        self.dec_out = config.get("dec_out", 1)
 
         # Patch 嵌入
         self.patch_emb_x = PatchEmbed(
@@ -233,7 +235,9 @@ class TimeAlign(nn.Module):
             .flatten(start_dim=-2)
         )
         x = x.permute(0, 2, 1)
+        # 对全通道进行 denorm，然后裁剪到需要的输出通道数 dec_out
         x = self.normalization_x(x, "denorm")
+        x = x[:, -self.pred_len:, :self.dec_out]
 
         if is_training:
             y = self.proj_y(
@@ -242,7 +246,8 @@ class TimeAlign(nn.Module):
             )
             y = y.permute(0, 2, 1)
             y = self.normalization_y(y, "denorm")
+            y = y[:, -self.pred_len:, :self.dec_out]
         else:
             y = None
 
-        return x[:, -self.pred_len :, :], y, align_loss
+        return x, y, align_loss

@@ -40,6 +40,8 @@ class PatchTST(nn.Module):
         self.seq_len = config["seq_len"]
         self.pred_len = config["pred_len"]
         self.enc_in = config["enc_in"]
+        # number of decoder output channels (default 1)
+        self.dec_out = config.get("dec_out", 1)
         self.patch_len = config["patch_len"]
         self.stride = config.get("stride", config["patch_len"])
 
@@ -95,8 +97,12 @@ class PatchTST(nn.Module):
     def _denorm(self, x):
         """RevIN 反归一化。"""
         return (
-            x * self._revin_stdev[:, 0, :].unsqueeze(1)
-            + self._revin_mean[:, 0, :].unsqueeze(1)
+            x * self._revin_stdev[:, 0, :].unsqueeze(1).repeat(
+                1, x.shape[1], 1
+            )
+            + self._revin_mean[:, 0, :].unsqueeze(1).repeat(
+                1, x.shape[1], 1
+            )
         )
 
     def forward(self, x, y, is_training=True):

@@ -34,6 +34,7 @@ class LSTMForecaster(nn.Module):
         self.seq_len = config["seq_len"]
         self.pred_len = config["pred_len"]
         self.enc_in = config["enc_in"]
+        self.dec_out = config.get("dec_out", 1)
         hidden_size = config["hidden_size"]
         num_layers = config.get("num_layers", 2)
         bidirectional = config.get("bidirectional", False)
@@ -55,7 +56,7 @@ class LSTMForecaster(nn.Module):
         # 投影: 隐状态 → 预测
         lstm_out_size = hidden_size * self.num_directions
         self.projection = nn.Linear(
-            lstm_out_size, self.pred_len * self.enc_in
+            lstm_out_size, self.pred_len * self.dec_out
         )
 
         self.dropout = nn.Dropout(config.get("dropout", 0.1))
@@ -97,6 +98,6 @@ class LSTMForecaster(nn.Module):
         output = self.projection(h_last)
 
         # [B, pred_len * C] → [B, pred_len, C]
-        output = output.view(B, self.pred_len, self.enc_in)
+        output = output.view(B, self.pred_len, self.dec_out)
 
         return output, None, 0.0

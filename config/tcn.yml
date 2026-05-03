@@ -1,13 +1,18 @@
-model: dlinear
+model: tcn
 seq_len: 96
 pred_len: 16
 enc_in: 23
-individual: true
-kernel_size: 25
+dec_out: 17
+num_channels:
+- 64
+- 64
+- 64
+kernel_size: 3
+dropout: 0.2
 seed: 42
 device: cuda
-lr: 0.0005
-batch_size: 32
+lr: 0.001
+batch_size: 64
 epochs: 100
 patience: 10
 optimizer: adamw
@@ -15,4 +20,3 @@ scheduler: cosine
 grad_clip: 1.0
 data_dir: data/wind_power/processed
 target_col: actual_power
-dec_out: 17

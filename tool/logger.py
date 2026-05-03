@@ -9,8 +9,8 @@ import datetime
 # ANSI 颜色码
 _COLORS = {
     "DATA": "\033[94m",    # 蓝色
-    "FEAT": "\033[92m",    # 绿色
-    "TRAIN": "\033[93m",   # 黄色
+    "FEAT": "\033[93m",    # 黄色
+    "TRAIN": "\033[92m",   # 绿色
     "EVAL": "\033[96m",    # 青色
     "RESET": "\033[0m",
 }

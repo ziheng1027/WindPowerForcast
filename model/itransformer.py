@@ -46,6 +46,7 @@ class ITransformer(nn.Module):
         self.pred_len = config["pred_len"]
         self.enc_in = config["enc_in"]
         self.use_norm = config.get("use_norm", True)
+        self.dec_out = config.get("dec_out", 1)
 
         # 反转嵌入: 每个变量的时间序列 → d_model
         self.enc_embedding = DataEmbeddingInverted(
@@ -114,13 +115,16 @@ class ITransformer(nn.Module):
 
         # 投影: [B, N, d_model] → [B, N, pred_len]
         dec_out = self.projector(enc_out)
-
-        # 转回: [B, N, pred_len] → [B, pred_len, N]
-        dec_out = dec_out.permute(0, 2, 1)
+        # [B, N, pred_len] → [B, pred_len, N]
+        dec_out = dec_out.permute(0, 2, 1)[:, :, :N]
 
         # 反归一化
         if self.use_norm:
-            dec_out = dec_out * stdev[:, 0, :].unsqueeze(1)
-            dec_out = dec_out + means[:, 0, :].unsqueeze(1)
+            dec_out = dec_out * stdev[:, 0, :].unsqueeze(1).repeat(
+                1, self.pred_len, 1
+            )
+            dec_out = dec_out + means[:, 0, :].unsqueeze(1).repeat(
+                1, self.pred_len, 1
+            )
 
         return dec_out, None, 0.0

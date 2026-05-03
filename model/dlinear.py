@@ -101,6 +101,7 @@ class DLinear(nn.Module):
         self.seq_len = config["seq_len"]
         self.pred_len = config["pred_len"]
         self.enc_in = config["enc_in"]
+        self.dec_out = config.get("dec_out", 1)
         self.individual = config.get("individual", False)
 
         kernel_size = config.get("kernel_size", 25)
@@ -109,11 +110,11 @@ class DLinear(nn.Module):
         if self.individual:
             self.linear_seasonal = nn.ModuleList([
                 nn.Linear(self.seq_len, self.pred_len)
-                for _ in range(self.enc_in)
+                for _ in range(self.dec_out)
             ])
             self.linear_trend = nn.ModuleList([
                 nn.Linear(self.seq_len, self.pred_len)
-                for _ in range(self.enc_in)
+                for _ in range(self.dec_out)
             ])
         else:
             self.linear_seasonal = nn.Linear(
@@ -148,22 +149,27 @@ class DLinear(nn.Module):
         if self.individual:
             B, C, _ = seasonal.shape
             s_out = torch.zeros(
-                B, C, self.pred_len,
+                B, self.dec_out, self.pred_len,
                 device=seasonal.device, dtype=seasonal.dtype
             )
             t_out = torch.zeros_like(s_out)
-            for i in range(C):
+            for i in range(self.dec_out):
+                # 只取 actual_power 通道 (index 0)
                 s_out[:, i, :] = self.linear_seasonal[i](
-                    seasonal[:, i, :]
+                    seasonal[:, 0, :]
                 )
                 t_out[:, i, :] = self.linear_trend[i](
-                    trend[:, i, :]
+                    trend[:, 0, :]
                 )
         else:
             s_out = self.linear_seasonal(seasonal)
             t_out = self.linear_trend(trend)
 
-        output = s_out + t_out
-        output = output.permute(0, 2, 1)  # [B, pred_len, C]
+        if self.individual:
+            output = s_out + t_out
+        else:
+            # 只取 actual_power 通道 (index 0)
+            output = s_out[:, 0:1, :] + t_out[:, 0:1, :]
+        output = output.permute(0, 2, 1)  # [B, pred_len, dec_out]
 
         return output, None, 0.0

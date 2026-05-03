@@ -17,9 +17,10 @@ class WindPowerDataset(Dataset):
     风电功率时序数据集。
 
     从预处理文件加载指定 split 的数据，
-    按滑动窗口切分为 (x_enc, y_enc, months) 对。
-    months 为预测目标窗口对应的月份列表，
-    用于按月评估准确率。
+    按滑动窗口切分为 (x_enc, y_enc, months, dates, minutes)。
+    months 为预测目标窗口对应的月份。
+    dates 为预测目标窗口对应的日期编码 (YYYYMMDD)。
+    minutes 为预测目标窗口对应的分钟数 (0~1425)。
     """
 
     def __init__(self, data_dir, split, seq_len, pred_len):
@@ -38,43 +39,58 @@ class WindPowerDataset(Dataset):
         self.seq_len = seq_len
         self.pred_len = pred_len
 
-        # 加载预处理数据
         with open(os.path.join(data_dir, "features.pkl"),
                   "rb") as f:
             df = pickle.load(f)
 
-        # 加载划分信息
         with open(os.path.join(data_dir, "split_info.json"),
                   "r", encoding="utf-8") as f:
             split_info = json.load(f)
 
-        # 筛选指定 split
         mask = df["split"] == split
         feature_cols = split_info["feature_cols"]
         data = df.loc[mask, feature_cols].values.astype(
             np.float32
         )
 
-        # 提取时间列的月份
         times = pd.to_datetime(df.loc[mask, "time"])
-        all_months = times.dt.month.values
+        all_months = times.dt.month.values.astype(np.int64)
 
-        # 滑动窗口切分
+        all_dates = (
+            times.dt.year * 10000
+            + times.dt.month * 100
+            + times.dt.day
+        ).values.astype(np.int64)
+
+        # 一天内的分钟数 (0~1425, 步长 15)
+        all_minutes = (
+            times.dt.hour * 60 + times.dt.minute
+        ).values.astype(np.int64)
+
         self.samples = []
         self.sample_months = []
+        self.sample_dates = []
+        self.sample_minutes = []
         total_len = seq_len + pred_len
 
         for i in range(len(data) - total_len + 1):
             x_enc = data[i : i + seq_len]
             y_enc = data[i + seq_len : i + total_len]
 
-            # 预测目标窗口对应的月份
             y_months = all_months[
+                i + seq_len : i + total_len
+            ]
+            y_dates = all_dates[
+                i + seq_len : i + total_len
+            ]
+            y_minutes = all_minutes[
                 i + seq_len : i + total_len
             ]
 
             self.samples.append((x_enc, y_enc))
             self.sample_months.append(y_months)
+            self.sample_dates.append(y_dates)
+            self.sample_minutes.append(y_minutes)
 
     def __len__(self):
         return len(self.samples)
@@ -82,10 +98,14 @@ class WindPowerDataset(Dataset):
     def __getitem__(self, idx):
         x_enc, y_enc = self.samples[idx]
         months = self.sample_months[idx]
+        dates = self.sample_dates[idx]
+        minutes = self.sample_minutes[idx]
         return (
             torch.tensor(x_enc, dtype=torch.float32),
             torch.tensor(y_enc, dtype=torch.float32),
             torch.tensor(months, dtype=torch.long),
+            torch.tensor(dates, dtype=torch.long),
+            torch.tensor(minutes, dtype=torch.long),
         )
 
 

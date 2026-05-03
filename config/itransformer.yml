@@ -1,64 +1,22 @@
-# ============================================================
-# iTransformer 模型配置
-# ============================================================
-
-# ---------------------- 模型结构 ----------------------
-
-# 模型名称
 model: itransformer
-
-# 输入序列长度（回看窗口）
-# 96 步 = 24 小时（15min 间隔），覆盖完整日周期
 seq_len: 96
-
-# 预测序列长度（预测窗口）
-# 16 步 = 4 小时（15min 间隔）
 pred_len: 16
-
-# 输入特征维度（变量数）
-# actual_power(1) + gfs(6) + tower(6) + time(4) = 17
-enc_in: 17
-
-# 模型隐藏维度
-# iTransformer 中每个变量 token 的嵌入维度
-# 值越大 → 模型容量越大，但参数量增长较快
+enc_in: 23
 d_model: 128
-
-# 前馈网络中间维度
-# 通常为 d_model 的 2~4 倍
 d_ff: 256
-
-# 编码器层数
-# 3 层为官方 Weather 基准配置
 e_layers: 3
-
-# 多头注意力头数
-# d_model 必须能被 n_heads 整除
-# 128/4=32，每头维度充足
 n_heads: 4
-
-# Dropout 率
-# 官方无 dropout，0.1 轻度正则化即可
 dropout: 0.1
-
-# 是否使用实例归一化（Non-stationary Transformer 风格）
-# 对每个样本独立计算均值/方差并归一化
-# true: 缓解非平稳性问题（推荐）
 use_norm: true
-
-# ---------------------- 训练参数 ----------------------
-
 seed: 42
 device: cuda
-lr: 0.0001
+lr: 0.0005
 batch_size: 32
 epochs: 100
 patience: 10
 optimizer: adamw
 scheduler: cosine
 grad_clip: 1.0
-
-# ---------------------- 数据路径 ----------------------
-
 data_dir: data/wind_power/processed
 target_col: actual_power
+dec_out: 17

@@ -29,15 +29,18 @@ def get_trainer(model_name):
         训练器类
     """
     from trainer.trainer_timealign import TrainerTimeAlign
+    from trainer.trainer_meteo import TrainerMeteoPower
     from trainer.trainer_base import TrainerBase
 
     trainers = {
         "timealign": TrainerTimeAlign,
+        "meteo_power": TrainerMeteoPower,
         "itransformer": TrainerBase,
         "patchtst": TrainerBase,
         "dlinear": TrainerBase,
         "lstm": TrainerBase,
         "bilstm": TrainerBase,
+        "tcn": TrainerBase,
     }
     if model_name not in trainers:
         raise ValueError(f"未知模型: {model_name}")
@@ -64,14 +67,18 @@ def get_model(model_name, config):
     from model.patchtst import PatchTST
     from model.dlinear import DLinear
     from model.lstm import LSTMForecaster
+    from model.tcn import TCNForecaster
+    from model.meteo_power import MeteoPowerNet
 
     models = {
         "timealign": TimeAlign,
+        "meteo_power": MeteoPowerNet,
         "itransformer": ITransformer,
         "patchtst": PatchTST,
         "dlinear": DLinear,
         "lstm": LSTMForecaster,
         "bilstm": LSTMForecaster,
+        "tcn": TCNForecaster,
     }
     if model_name not in models:
         raise ValueError(f"未知模型: {model_name}")
@@ -100,12 +107,18 @@ def main():
     logger.log_config(config)
 
     # 4. 构建数据
-    from dataset.wind_power import get_dataloader
+    dataset_type = config.get("dataset_type", "default")
+    if dataset_type == "meteo":
+        from dataset.meteo_power import get_meteo_dataloader
+        get_dl = get_meteo_dataloader
+    else:
+        from dataset.wind_power import get_dataloader
+        get_dl = get_dataloader
 
     logger.log_feat("加载数据集...")
-    train_loader = get_dataloader(config, "train")
-    valid_loader = get_dataloader(config, "valid")
-    test_loader = get_dataloader(config, "test")
+    train_loader = get_dl(config, "train")
+    valid_loader = get_dl(config, "valid")
+    test_loader = get_dl(config, "test")
 
     logger.log_feat(f"训练集: {len(train_loader.dataset)} 样本")
     logger.log_feat(f"验证集: {len(valid_loader.dataset)} 样本")

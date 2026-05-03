@@ -121,6 +121,10 @@ data/
 *.ckpt
 checkpoints/
 
+# Output
+docs/
+output/
+
 # IDE
 .vscode/
 .idea/

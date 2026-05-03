@@ -140,6 +140,58 @@ def build_time_features(df):
     return df
 
 
+# ========== 派生特征配置 ==========
+DERIVED_COLS = [
+    "tower_ws_cube",
+    "gfs_ws_cube",
+    "ws_bias",
+    "delta_tower_ws",
+    "delta_power",
+    "power_ramp_rate",
+]
+
+
+def build_derived_features(df):
+    """
+    构建派生特征：风速三次方、偏差、变化率。
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        含原始特征列的 DataFrame
+
+    Returns
+    -------
+    pd.DataFrame
+        添加派生特征后的 DataFrame
+    """
+    # 风速三次方（P ∝ v³）
+    df["tower_ws_cube"] = df["tower_wind_speed"] ** 3
+    df["gfs_ws_cube"] = df["gfs_wind_speed"] ** 3
+
+    # 实测与预报偏差（GFS 订正信号）
+    df["ws_bias"] = (
+        df["tower_wind_speed"] - df["gfs_wind_speed"]
+    )
+
+    # 变化率（15min 差分）
+    df["delta_tower_ws"] = (
+        df["tower_wind_speed"].diff().fillna(0.0)
+    )
+    df["delta_power"] = (
+        df["actual_power"].diff().fillna(0.0)
+    )
+
+    # 功率变化率（归一化，避免除零）
+    prev_power = df["actual_power"].shift(1)
+    prev_power = prev_power.clip(lower=1.0)
+    df["power_ramp_rate"] = (
+        df["delta_power"] / prev_power
+    ).fillna(0.0)
+
+    return df
+
+
 def split_data(df):
     """
     按月份划分 train/valid/test。
@@ -282,8 +334,17 @@ def main():
     log("[FEAT] 构建时间编码特征...")
     df = build_time_features(df)
 
+    log("[FEAT] 构建派生特征...")
+    df = build_derived_features(df)
+
     # 特征列顺序: 目标列在第0位
-    feature_cols = [TARGET_COL] + GFS_COLS + TOWER_COLS + TIME_FEATURES
+    feature_cols = (
+        [TARGET_COL]
+        + GFS_COLS
+        + TOWER_COLS
+        + DERIVED_COLS
+        + TIME_FEATURES
+    )
     log(f"[FEAT] 特征维度: {len(feature_cols)}")
     log(f"[FEAT] 特征列表: {feature_cols}")
     log(f"[FEAT] 数据形状: ({len(df)}, {len(feature_cols)})")

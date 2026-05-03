@@ -3,9 +3,6 @@
 
 子类通过覆写 forward_batch() 实现模型特有逻辑。
 """
-
-import math
-
 import torch
 import torch.nn as nn
 from torch import optim
@@ -142,7 +139,7 @@ class TrainerBase:
         metrics : dict
             详细指标
         """
-        x_enc, y_enc, _ = batch
+        x_enc, y_enc, _, _, _ = batch
         x_enc = x_enc.to(self.device)
         y_enc = y_enc.to(self.device)
 
@@ -150,7 +147,7 @@ class TrainerBase:
             x_enc, y_enc, is_training=is_training
         )
 
-        # 取目标列（第0列）
+        # 模型输出 [B, pred_len, C], 只对目标变量(第0维)计算loss
         pred_target = output[:, :, 0]
         true_target = y_enc[:, :, 0]
 
@@ -301,7 +298,7 @@ class TrainerBase:
 
         with torch.no_grad():
             for batch in self.test_loader:
-                x_enc, y_enc = batch
+                x_enc, y_enc, _, _, _ = batch
                 x_enc = x_enc.to(self.device)
                 y_enc = y_enc.to(self.device)
 
@@ -309,7 +306,7 @@ class TrainerBase:
                     x_enc, y_enc, is_training=False
                 )
 
-                # 取目标列（第0列）
+                # 模型输出 [B, pred_len, C], 取第0维(目标变量)
                 preds.append(
                     output[:, :, 0].detach().cpu().numpy()
                 )
