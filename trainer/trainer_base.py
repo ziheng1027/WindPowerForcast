@@ -57,6 +57,11 @@ class TrainerBase:
         self.train_losses = []
         self.valid_losses = []
 
+    def _log(self, method, msg):
+        """安全日志记录（兼容 logger=None 的静默模式）。"""
+        if self.logger is not None:
+            getattr(self.logger, method)(msg)
+
     def _select_optimizer(self):
         """
         根据配置选择优化器。
@@ -228,11 +233,12 @@ class TrainerBase:
         """
         model_name = self.config.get("model", "unknown")
         save_path = f"output/checkpoint/{model_name}"
+        silent = self.config.get("_silent", False)
         early_stopping = EarlyStopping(
-            patience=self.patience, verbose=True
+            patience=self.patience, verbose=not silent
         )
 
-        self.logger.log_train("开始训练...")
+        self._log("log_train", "开始训练...")
 
         for epoch in range(1, self.epochs + 1):
             # 训练
@@ -259,9 +265,11 @@ class TrainerBase:
 
             # 日志
             metrics_str = " | ".join(
-                f"{k}: {v:.6f}" for k, v in train_metrics.items()
+                f"{k}: {v:.6f}"
+                for k, v in train_metrics.items()
             )
-            self.logger.log_train(
+            self._log(
+                "log_train",
                 f"Epoch {epoch}/{self.epochs} | "
                 f"Train: {train_loss:.6f} | "
                 f"Valid: {valid_loss:.6f} | "
@@ -271,7 +279,8 @@ class TrainerBase:
             # 早停检查
             early_stopping(valid_loss, self.model, save_path)
             if early_stopping.early_stop:
-                self.logger.log_train(
+                self._log(
+                    "log_train",
                     f"早停触发于 epoch {epoch}"
                 )
                 break
@@ -281,7 +290,7 @@ class TrainerBase:
         self.model.load_state_dict(
             torch.load(best_path, weights_only=True)
         )
-        self.logger.log_train("已加载最佳模型权重")
+        self._log("log_train", "已加载最佳模型权重")
 
     def test(self):
         """

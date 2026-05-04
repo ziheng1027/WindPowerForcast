@@ -85,28 +85,42 @@ def get_model(model_name, config):
     return models[model_name](config)
 
 
-def main():
-    """主训练流程。"""
-    parser = argparse.ArgumentParser(description="WPF 训练入口")
-    parser.add_argument(
-        "--config", type=str, required=True, help="配置文件路径"
-    )
-    args = parser.parse_args()
+def train_and_evaluate(config, silent=False):
+    """
+    可编程调用的训练接口。
 
-    # 1. 加载配置
-    config = load_config(args.config)
+    完成数据加载 → 构建模型 → 训练，
+    返回最佳验证 loss 和训练器实例。
+
+    Parameters
+    ----------
+    config : dict
+        模型和训练配置
+    silent : bool
+        静默模式（超参调优时关闭文件日志和绘图）
+
+    Returns
+    -------
+    float
+        最佳验证 loss
+    TrainerBase
+        训练器实例（含模型权重和 loss 历史）
+    """
     model_name = config["model"]
 
-    # 2. 设置种子和设备
+    # 1. 设置种子和设备
     set_seed(config.get("seed", 42))
     device = get_device(config)
 
-    # 3. 初始化日志
-    log_dir = f"output/log/{model_name}"
-    logger = Logger(log_dir, model_name)
-    logger.log_config(config)
+    # 2. 日志
+    if silent:
+        logger = None
+    else:
+        log_dir = f"output/log/{model_name}"
+        logger = Logger(log_dir, model_name)
+        logger.log_config(config)
 
-    # 4. 构建数据
+    # 3. 构建数据
     dataset_type = config.get("dataset_type", "default")
     if dataset_type == "meteo":
         from dataset.meteo_power import get_meteo_dataloader
@@ -115,39 +129,78 @@ def main():
         from dataset.wind_power import get_dataloader
         get_dl = get_dataloader
 
-    logger.log_feat("加载数据集...")
+    if not silent:
+        logger.log_feat("加载数据集...")
+
     train_loader = get_dl(config, "train")
     valid_loader = get_dl(config, "valid")
     test_loader = get_dl(config, "test")
 
-    logger.log_feat(f"训练集: {len(train_loader.dataset)} 样本")
-    logger.log_feat(f"验证集: {len(valid_loader.dataset)} 样本")
-    logger.log_feat(f"测试集: {len(test_loader.dataset)} 样本")
+    if not silent:
+        logger.log_feat(
+            f"训练集: {len(train_loader.dataset)} 样本"
+        )
+        logger.log_feat(
+            f"验证集: {len(valid_loader.dataset)} 样本"
+        )
+        logger.log_feat(
+            f"测试集: {len(test_loader.dataset)} 样本"
+        )
 
-    # 5. 构建模型
+    # 4. 构建模型
     model = get_model(model_name, config)
     n_params = count_parameters(model)
-    logger.log_train(f"模型: {model_name}, 参数量: {n_params:,}")
 
-    # 6. 构建训练器
+    if not silent:
+        logger.log_train(
+            f"模型: {model_name}, 参数量: {n_params:,}"
+        )
+    else:
+        print(f"  参数量: {n_params:,}")
+
+    # 5. 构建训练器
     TrainerClass = get_trainer(model_name)
+    if silent:
+        config = {**config, "_silent": True}
     trainer = TrainerClass(
         model, config, train_loader, valid_loader,
         test_loader, logger, device
     )
 
-    # 7. 训练
+    # 6. 训练
     trainer.train()
 
-    # 8. 绘制 loss 曲线
-    fig_path = f"output/figure/{model_name}/loss_curve.png"
-    plot_loss_curve(trainer.train_losses, trainer.valid_losses,
-                    fig_path)
-    logger.log_train(f"Loss 曲线保存至: {fig_path}")
+    # 7. 后处理
+    best_valid_loss = min(trainer.valid_losses)
 
-    # 9. 关闭日志
-    logger.close()
-    print("训练完成。")
+    if not silent:
+        fig_path = f"output/figure/{model_name}/loss_curve.png"
+        plot_loss_curve(
+            trainer.train_losses, trainer.valid_losses,
+            fig_path
+        )
+        logger.log_train(
+            f"Loss 曲线保存至: {fig_path}\n\n"
+        )
+        logger.close()
+        print("训练完成。")
+    else:
+        print(f"  Best valid loss: {best_valid_loss:.6f}")
+
+    return best_valid_loss, trainer
+
+
+def main():
+    """CLI 训练入口。"""
+    parser = argparse.ArgumentParser(description="WPF 训练入口")
+    parser.add_argument(
+        "--config", type=str, required=True,
+        help="配置文件路径"
+    )
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    train_and_evaluate(config, silent=False)
 
 
 if __name__ == "__main__":

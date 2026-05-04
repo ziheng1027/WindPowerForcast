@@ -318,7 +318,7 @@ def main():
         logger.log_eval(
             f"  {label}日报: {day_path}"
         )
-
+    logger.log_eval("\n\n")
     logger.close()
     print("测试完成。")
 

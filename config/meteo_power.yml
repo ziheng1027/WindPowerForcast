@@ -6,22 +6,21 @@ dec_out: 17
 hidden_size: 64
 tcn_channels:
 - 32
-- 32
-- 32
+- 64
 tcn_future_channels:
-- 32
+- 16
 - 32
 kernel_size: 3
 d_attn: 64
 dropout: 0.2
 seed: 42
 device: cuda
-lr: 0.001
+lr: 0.0003
 batch_size: 64
 epochs: 100
 patience: 10
 optimizer: adamw
-scheduler: cosine
+scheduler: plateau
 grad_clip: 1.0
 dataset_type: meteo
 data_dir: data/wind_power/processed
